@@ -18,7 +18,7 @@ function findList(raw) {
   const q = [raw];
   while (q.length) {
     const cur = q.shift();
-    if (Array.isArray(cur) && cur.length >= 20 && cur[0] && typeof cur[0] === "object")
+    if (Array.isArray(cur) && cur.length >= 1 && cur[0] && typeof cur[0] === "object" && findCode(cur[0]))
       return cur;
     if (cur && typeof cur === "object")
       for (const v of Object.values(cur)) q.push(v);
