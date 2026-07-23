@@ -73,8 +73,8 @@ export default async function handler(req, res) {
     let firstRaw = null, firstList = null;
 
     // דפדוף: אופ"א מחזירים ~20 מדינות לעמוד — אוספים עד 4 עמודים
-    for (let page = 1; page <= 4; page++) {
-      const r = await fetch(`${UEFA_BASE}&pageSize=60&page=${page}`, { headers: HEADERS });
+    for (let page = 1; page <= 6; page++) {
+      const r = await fetch(`${UEFA_BASE}&pageSize=20&page=${page}`, { headers: HEADERS });
       if (!r.ok) { if (page === 1) throw new Error(`UEFA HTTP ${r.status}`); break; }
       const raw = await r.json();
       const list = findList(raw);
