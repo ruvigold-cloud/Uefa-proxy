@@ -2,7 +2,7 @@
 // הכתובת שאומתה כעובדת: coefficientRange=OVERALL (השאר מחזירות 400).
 // המפענח גנרי — מאתר לבד את רשימת המדינות, הקוד והעונות בכל מבנה תשובה.
 
-const UEFA_URL =
+const UEFA_BASE =
   "https://comp.uefa.com/v2/coefficients?coefficientRange=OVERALL&coefficientType=MEN_ASSOCIATION&seasonYear=2027&language=EN";
 
 const HEADERS = {
@@ -53,7 +53,8 @@ function findSeasons(o) {
           typeof x === "number" ? x
           : Number(x?.value ?? x?.coefficient ?? x?.points ?? x?.totalValue ?? NaN));
         if (nums.filter(Number.isFinite).length >= 5)
-          return nums.slice(-5).map((n) => (Number.isFinite(n) ? n : 0));
+          // אופ"א מחזירים מהעונה החדשה לישנה — הופכים לסדר כרונולוגי
+          return nums.slice(0, 5).map((n) => (Number.isFinite(n) ? n : 0)).reverse();
       }
       if (v && typeof v === "object" && !Array.isArray(v)) stack.push([v, d + 1]);
     }
@@ -67,39 +68,47 @@ export default async function handler(req, res) {
   if (req.method === "OPTIONS") return res.status(204).end();
 
   try {
-    const r = await fetch(UEFA_URL, { headers: HEADERS });
-    if (!r.ok) throw new Error(`UEFA HTTP ${r.status}`);
-    const raw = await r.json();
-    const list = findList(raw);
+    const countries = [];
+    const seen = new Set();
+    let firstRaw = null, firstList = null;
+
+    // דפדוף: אופ"א מחזירים ~20 מדינות לעמוד — אוספים עד 4 עמודים
+    for (let page = 1; page <= 4; page++) {
+      const r = await fetch(`${UEFA_BASE}&pageSize=60&page=${page}`, { headers: HEADERS });
+      if (!r.ok) { if (page === 1) throw new Error(`UEFA HTTP ${r.status}`); break; }
+      const raw = await r.json();
+      const list = findList(raw);
+      if (page === 1) { firstRaw = raw; firstList = list; }
+      let added = 0;
+      for (const m of list) {
+        const code = findCode(m);
+        const seasons = findSeasons(m);
+        if (!code || !seasons || seen.has(code)) continue;
+        seen.add(code); added++;
+        const entry = { code, seasons };
+        const act = m?.member?.teamsLeft ?? m?.teamsLeft ?? m?.overallRanking?.teamsLeft;
+        const tot = m?.member?.totalTeams ?? m?.totalTeams ?? m?.overallRanking?.totalTeams;
+        if (Number.isFinite(act) && Number.isFinite(tot)) entry.teams = `${act}/${tot}`;
+        countries.push(entry);
+      }
+      if (!added) break; // עמוד ריק/חוזר — סיימנו
+    }
 
     // מצב אבחון: ?debug=1 מציג את מבנה התשובה הגולמי
     if (req.query && req.query.debug) {
       return res.status(200).json({
-        topKeys: raw && typeof raw === "object" ? Object.keys(raw) : typeof raw,
-        listLength: list.length,
-        firstItem: list[0] ?? null,
+        topKeys: firstRaw && typeof firstRaw === "object" ? Object.keys(firstRaw) : typeof firstRaw,
+        listLength: firstList ? firstList.length : 0,
+        parsed: countries.length,
+        firstItem: firstList ? firstList[0] : null,
       });
     }
 
-    const countries = [];
-    for (const m of list) {
-      const code = findCode(m);
-      const seasons = findSeasons(m);
-      if (!code || !seasons) continue;
-      const entry = { code, seasons };
-      const act = m?.member?.teamsLeft ?? m?.teamsLeft ?? m?.overallRanking?.teamsLeft;
-      const tot = m?.member?.totalTeams ?? m?.totalTeams ?? m?.overallRanking?.totalTeams;
-      if (Number.isFinite(act) && Number.isFinite(tot)) entry.teams = `${act}/${tot}`;
-      countries.push(entry);
-    }
-
     if (!countries.length) {
-      // מציגים את המבנה כדי שנוכל לתקן בסבב אחד
       return res.status(502).json({
         error: "parsed 0 countries",
-        topKeys: raw && typeof raw === "object" ? Object.keys(raw) : typeof raw,
-        listLength: list.length,
-        firstItem: list[0] ?? null,
+        topKeys: firstRaw && typeof firstRaw === "object" ? Object.keys(firstRaw) : typeof firstRaw,
+        firstItem: firstList ? firstList[0] : null,
       });
     }
 
@@ -107,10 +116,11 @@ export default async function handler(req, res) {
     return res.status(200).json({
       updated: new Date().toISOString(),
       seasonYear: 2027,
+      count: countries.length,
       countries,
     });
   } catch (err) {
     res.setHeader("Cache-Control", "no-store");
-    return res.status(502).json({ error: String(err.message || err) });
+    return res.status(502).json({ error: "" + (err.message || err) });
   }
 }
